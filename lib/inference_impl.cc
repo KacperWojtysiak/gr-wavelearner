@@ -125,39 +125,39 @@ cudaError inference_impl::validate_engine() {
     return cudaErrorInitializationError;
   }
 
-  if (engine_->getNbBindings() != kNumIOPorts) {
-    trt_logger_.log_error("Engine has invalid number of bindings.");
-    return cudaErrorInvalidValue;
-  }
+  // if (engine_->getNbBindings() != kNumIOPorts) {
+  //   trt_logger_.log_error("Engine has invalid number of bindings.");
+  //   return cudaErrorInvalidValue;
+  // }
 
-  const size_t max_batch_size = static_cast<size_t>(engine_->getMaxBatchSize());
-  if (batch_size_ > max_batch_size) {
-    trt_logger_.log_error("Unsupported batch size detected.");
-    return cudaErrorInvalidValue;
-  }
+  // const size_t max_batch_size = static_cast<size_t>(engine_->getMaxBatchSize());
+  // if (batch_size_ > max_batch_size) {
+  //   trt_logger_.log_error("Unsupported batch size detected.");
+  //   return cudaErrorInvalidValue;
+  // }
 
-  for (int i = 0; i < kNumIOPorts; ++i) {
-    if (engine_->bindingIsInput(i)) {
-      if (input_binding_index_ != kInvalidBindingIndex) {
-        trt_logger_.log_error("Multiple input bindings detected.");
-        return cudaErrorUnknown;
-      } else {
-        input_binding_index_ = i;
-      }
-    } else {
-      if (output_binding_index_ != kInvalidBindingIndex) {
-        trt_logger_.log_error("Multiple output bindings detected.");
-        return cudaErrorUnknown;
-      }
-      output_binding_index_ = i;
-    }
-    // Inputs and outputs into TRT are always FP32. For reduced precision
-    // inference, the engine performs a conversion under the hood.
-    if (engine_->getBindingDataType(i) != nvinfer1::DataType::kFLOAT) {
-      trt_logger_.log_error("Unsupported I/O data type found.");
-      return cudaErrorInvalidValue;
-    }
-  }
+  // for (int i = 0; i < kNumIOPorts; ++i) {
+  //   if (engine_->bindingIsInput(i)) {
+  //     if (input_binding_index_ != kInvalidBindingIndex) {
+  //       trt_logger_.log_error("Multiple input bindings detected.");
+  //       return cudaErrorUnknown;
+  //     } else {
+  //       input_binding_index_ = i;
+  //     }
+  //   } else {
+  //     if (output_binding_index_ != kInvalidBindingIndex) {
+  //       trt_logger_.log_error("Multiple output bindings detected.");
+  //       return cudaErrorUnknown;
+  //     }
+  //     output_binding_index_ = i;
+  //   }
+  //   // Inputs and outputs into TRT are always FP32. For reduced precision
+  //   // inference, the engine performs a conversion under the hood.
+  //   if (engine_->getBindingDataType(i) != nvinfer1::DataType::kFLOAT) {
+  //     trt_logger_.log_error("Unsupported I/O data type found.");
+  //     return cudaErrorInvalidValue;
+  //   }
+  // }
 
   if ((input_binding_index_ == output_binding_index_) ||
       (input_binding_index_ == kInvalidBindingIndex) ||
@@ -166,19 +166,19 @@ cudaError inference_impl::validate_engine() {
     return cudaErrorUnknown;
   }
 
-  const nvinfer1::Dims input_dims =
-      engine_->getBindingDimensions(input_binding_index_);
-  if (get_trt_binding_size(input_dims) != input_buffer_size_) {
-    trt_logger_.log_error("Input size mismatch detected.");
-    return cudaErrorInvalidValue;
-  }
+  // const nvinfer1::Dims input_dims =
+  //     engine_->getBindingDimensions(input_binding_index_);
+  // if (get_trt_binding_size(input_dims) != input_buffer_size_) {
+  //   trt_logger_.log_error("Input size mismatch detected.");
+  //   return cudaErrorInvalidValue;
+  // }
 
-  const nvinfer1::Dims output_dims =
-    engine_->getBindingDimensions(output_binding_index_);
-  if (get_trt_binding_size(output_dims) != output_buffer_size_) {
-    trt_logger_.log_error("Output size mismatch detected.");
-    return cudaErrorInvalidValue;
-  }
+  // const nvinfer1::Dims output_dims =
+  //   engine_->getBindingDimensions(output_binding_index_);
+  // if (get_trt_binding_size(output_dims) != output_buffer_size_) {
+  //   trt_logger_.log_error("Output size mismatch detected.");
+  //   return cudaErrorInvalidValue;
+  // }
 
   // If everything checks out, we build the execution context.
   infer_context_.reset(engine_->createExecutionContext());
@@ -190,17 +190,17 @@ cudaError inference_impl::validate_engine() {
   // Handle the case of a PLAN that is expecting an explicit batch size (common
   // case for PLAN files generated from ONNX files). If we are using an explicit
   // batch size, we need to set the input binding dimensions accordingly.
-  if (input_dims.d[0] == -1) {
-    explicit_batch_size_ = true;
-    nvinfer1::Dims new_input_dims(input_dims);
-    new_input_dims.d[0] = batch_size_;
-    const bool resize_success =
-      infer_context_->setBindingDimensions(input_binding_index_, new_input_dims);
-    if (!resize_success) {
-      trt_logger_.log_error("Failed to resize input binding.");
-      return cudaErrorInitializationError;
-    }
-  }
+  // if (input_dims.d[0] == -1) {
+  //   explicit_batch_size_ = true;
+  //   nvinfer1::Dims new_input_dims(input_dims);
+  //   new_input_dims.d[0] = batch_size_;
+  //   const bool resize_success =
+  //     infer_context_->setBindingDimensions(input_binding_index_, new_input_dims);
+  //   if (!resize_success) {
+  //     trt_logger_.log_error("Failed to resize input binding.");
+  //     return cudaErrorInitializationError;
+  //   }
+  // }
 
   return cudaSuccess;
 }
@@ -262,8 +262,6 @@ int inference_impl::work(int noutput_items,
   void** buffs = reinterpret_cast<void**>(buffers_);
   if (explicit_batch_size_)
     infer_success = infer_context_->executeV2(buffs);
-  else
-    infer_success = infer_context_->execute(batch_size_, buffs);
   if (!infer_success)
     err_handler_.throw_on_cuda_rt_err(cudaErrorLaunchFailure, "run inference");
 
