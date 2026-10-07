@@ -8,29 +8,34 @@
 #ifndef INCLUDED_WAVELEARNER_INFERENCE_IMPL_H
 #define INCLUDED_WAVELEARNER_INFERENCE_IMPL_H
 
-#include <wavelearner/inference.h>
+#include "cuda_utils.h"
+#include <NvInfer.h>
 #include <chrono>
-#include <memory>
-#include <string>
 #include <cuda.h>
 #include <cuda_runtime_api.h>
-#include <NvInfer.h>
-#include "cuda_utils.h"
+#include <memory>
+#include <sstream>
+#include <string>
+#include <wavelearner/inference.h>
 
 namespace gr {
 namespace wavelearner {
 
 class inference_impl : public inference {
- public:
-  inference_impl(const std::string& plan_filepath, const bool complex_input,
+public:
+  inference_impl(const std::string &plan_filepath, const bool complex_input,
                  const size_t input_vlen, const size_t output_vlen,
                  const size_t batch_size);
   ~inference_impl();
 
-  int work(int noutput_items, gr_vector_const_void_star& input_items,
-           gr_vector_void_star& output_items);
+  int work(int noutput_items, gr_vector_const_void_star &input_items,
+           gr_vector_void_star &output_items);
 
- private:
+private:
+  // TensorRT 10 addresses I/O tensors by name instead of binding index
+  std::string input_name_;
+  std::string output_name_;
+  cudaStream_t stream_ = nullptr;
   static constexpr auto kBlockName = "inference";
   static constexpr int kNumIOPorts = 2;
   static constexpr int kInvalidBindingIndex = -1;
@@ -38,7 +43,7 @@ class inference_impl : public inference {
   std::unique_ptr<nvinfer1::IRuntime> infer_runtime_;
   std::unique_ptr<nvinfer1::ICudaEngine> engine_;
   std::unique_ptr<nvinfer1::IExecutionContext> infer_context_;
-  float* buffers_[kNumIOPorts];
+  float *buffers_[kNumIOPorts];
   int input_binding_index_;
   int output_binding_index_;
   size_t input_buffer_size_;
@@ -53,9 +58,9 @@ class inference_impl : public inference {
   std::chrono::duration<double> total_work_time_;
   TrtLogger trt_logger_;
   CudaErrorHandler err_handler_;
-  
+
   // Helper functions to load and validate the engine
-  cudaError load_engine(const std::string& plan_filepath);
+  cudaError load_engine(const std::string &plan_filepath);
   cudaError validate_engine();
 
   // Helper function that converts the vector length set in the GNU Radio
@@ -68,13 +73,12 @@ class inference_impl : public inference {
   // input or output binding into a number of bytes (aka. a buffer size).
   // Used to determine if the engine's parameters and the vector lengths
   // set in the GNU Radio flowgraph match up.
-  size_t get_trt_binding_size(const nvinfer1::Dims& dims) const noexcept;
-  
+  size_t get_trt_binding_size(const nvinfer1::Dims &dims) const noexcept;
+
   void print_performance_metrics() const noexcept;
 };
 
-}  // namespace wavelearner
-}  // namespace gr
+} // namespace wavelearner
+} // namespace gr
 
-#endif  // INCLUDED_WAVELEARNER_INFERENCE_IMPL_H
-
+#endif // INCLUDED_WAVELEARNER_INFERENCE_IMPL_H

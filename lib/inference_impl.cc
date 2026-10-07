@@ -8,13 +8,13 @@
 #include "inference_impl.h"
 #include <cstring>
 #include <fstream>
-#include <iostream>
 #include <gnuradio/io_signature.h>
+#include <iostream>
 
 namespace gr {
 namespace wavelearner {
 
-inference::sptr inference::make(const std::string& plan_filepath,
+inference::sptr inference::make(const std::string &plan_filepath,
                                 const bool complex_input,
                                 const size_t input_vlen,
                                 const size_t output_vlen,
@@ -23,51 +23,46 @@ inference::sptr inference::make(const std::string& plan_filepath,
       plan_filepath, complex_input, input_vlen, output_vlen, batch_size);
 }
 
-inference_impl::inference_impl(const std::string& plan_filepath,
+inference_impl::inference_impl(const std::string &plan_filepath,
                                const bool complex_input,
                                const size_t input_vlen,
                                const size_t output_vlen,
                                const size_t batch_size)
-    : context_(),
-      infer_runtime_(nullptr),
-      engine_(nullptr),
-      infer_context_(nullptr),
-      buffers_(),
+    : context_(), infer_runtime_(nullptr), engine_(nullptr),
+      infer_context_(nullptr), buffers_(),
       input_binding_index_(kInvalidBindingIndex),
       output_binding_index_(kInvalidBindingIndex),
       input_buffer_size_(get_gr_buffer_size(input_vlen, complex_input)),
       output_buffer_size_(get_gr_buffer_size(output_vlen)),
-      batch_size_(batch_size),
-      explicit_batch_size_(false),
+      batch_size_(batch_size), explicit_batch_size_(false),
       total_signal_segments_processed_(0),
-      total_work_time_(std::chrono::seconds::zero()),
-      trt_logger_(),
+      total_work_time_(std::chrono::seconds::zero()), trt_logger_(),
       err_handler_(kBlockName),
       gr::sync_block(
-           kBlockName,
-           gr::io_signature::make(1, 1, get_gr_buffer_size(input_vlen, complex_input)),
-           gr::io_signature::make(1, 1, get_gr_buffer_size(output_vlen))) {
+          kBlockName,
+          gr::io_signature::make(1, 1,
+                                 get_gr_buffer_size(input_vlen, complex_input)),
+          gr::io_signature::make(1, 1, get_gr_buffer_size(output_vlen))) {
   err_handler_.throw_on_cuda_drv_err(cuInit(0), "initialize CUDA driver API");
   CUdevice dev;
   err_handler_.throw_on_cuda_drv_err(cuDeviceGet(&dev, 0), "get CUDA device");
   err_handler_.throw_on_cuda_drv_err(
-      cuCtxCreate(&context_, kDefaultCtxFlags, dev),
-      "create device context");
-
+      cuCtxCreate(&context_, kDefaultCtxFlags, dev), "create device context");
+  std::cout << plan_filepath;
   err_handler_.throw_on_cuda_rt_err(load_engine(plan_filepath),
                                     "load TensorRT engine");
   err_handler_.throw_on_cuda_rt_err(validate_engine(),
                                     "validate TensorRT engine");
 
   err_handler_.throw_on_cuda_rt_err(
-      cudaHostAlloc(reinterpret_cast<void**>(&buffers_[input_binding_index_]),
+      cudaHostAlloc(reinterpret_cast<void **>(&buffers_[input_binding_index_]),
                     input_buffer_size_, cudaHostAllocMapped),
       "allocate input buffer");
   err_handler_.throw_on_cuda_rt_err(
-      cudaHostAlloc(reinterpret_cast<void**>(&buffers_[output_binding_index_]),
+      cudaHostAlloc(reinterpret_cast<void **>(&buffers_[output_binding_index_]),
                     output_buffer_size_, cudaHostAllocMapped),
       "allocate output buffer");
-  
+
   err_handler_.throw_on_cuda_drv_err(cuCtxPopCurrent(&context_),
                                      "pop context during init");
 }
@@ -86,7 +81,7 @@ inference_impl::~inference_impl() {
   cuCtxDestroy(context_);
 }
 
-cudaError inference_impl::load_engine(const std::string& plan_filepath) {
+cudaError inference_impl::load_engine(const std::string &plan_filepath) {
   infer_runtime_.reset(nvinfer1::createInferRuntime(trt_logger_));
   if (!infer_runtime_) {
     trt_logger_.log_error("Failed to create inference runtime.");
@@ -109,13 +104,13 @@ cudaError inference_impl::load_engine(const std::string& plan_filepath) {
 
   const std::string serialized_engine = plan_buffer.str();
   plan_file.close();
-  engine_.reset(infer_runtime_->deserializeCudaEngine(serialized_engine.data(),
-                                                      serialized_engine.size()));
+  engine_.reset(infer_runtime_->deserializeCudaEngine(
+      serialized_engine.data(), serialized_engine.size()));
   if (!engine_) {
     trt_logger_.log_error("Failed to deserialize engine.");
     return cudaErrorInitializationError;
   }
-  
+
   return cudaSuccess;
 }
 
@@ -124,40 +119,25 @@ cudaError inference_impl::validate_engine() {
     trt_logger_.log_error("Attempted to validate NULL engine.");
     return cudaErrorInitializationError;
   }
-
-  // if (engine_->getNbBindings() != kNumIOPorts) {
-  //   trt_logger_.log_error("Engine has invalid number of bindings.");
-  //   return cudaErrorInvalidValue;
-  // }
-
-  // const size_t max_batch_size = static_cast<size_t>(engine_->getMaxBatchSize());
-  // if (batch_size_ > max_batch_size) {
-  //   trt_logger_.log_error("Unsupported batch size detected.");
-  //   return cudaErrorInvalidValue;
-  // }
-
-  // for (int i = 0; i < kNumIOPorts; ++i) {
-  //   if (engine_->bindingIsInput(i)) {
-  //     if (input_binding_index_ != kInvalidBindingIndex) {
-  //       trt_logger_.log_error("Multiple input bindings detected.");
-  //       return cudaErrorUnknown;
-  //     } else {
-  //       input_binding_index_ = i;
-  //     }
-  //   } else {
-  //     if (output_binding_index_ != kInvalidBindingIndex) {
-  //       trt_logger_.log_error("Multiple output bindings detected.");
-  //       return cudaErrorUnknown;
-  //     }
-  //     output_binding_index_ = i;
-  //   }
-  //   // Inputs and outputs into TRT are always FP32. For reduced precision
-  //   // inference, the engine performs a conversion under the hood.
-  //   if (engine_->getBindingDataType(i) != nvinfer1::DataType::kFLOAT) {
-  //     trt_logger_.log_error("Unsupported I/O data type found.");
-  //     return cudaErrorInvalidValue;
-  //   }
-  // }
+  // TensorRT 10: tensors are addressed by name, not by binding index.
+  if (engine_->getNbIOTensors() != kNumIOPorts) {
+    trt_logger_.log_error("Engine has invalid number of I/O tensors.");
+    return cudaErrorInvalidValue;
+  }
+  for (int i = 0; i < kNumIOPorts; ++i) {
+    const char *name = engine_->getIOTensorName(i);
+    if (engine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+      input_binding_index_ = i;
+      input_name_ = name;
+    } else {
+      output_binding_index_ = i;
+      output_name_ = name;
+    }
+    if (engine_->getTensorDataType(name) != nvinfer1::DataType::kFLOAT) {
+      trt_logger_.log_error("Unsupported I/O data type found.");
+      return cudaErrorInvalidValue;
+    }
+  }
 
   if ((input_binding_index_ == output_binding_index_) ||
       (input_binding_index_ == kInvalidBindingIndex) ||
@@ -187,38 +167,34 @@ cudaError inference_impl::validate_engine() {
     return cudaErrorInitializationError;
   }
 
-  // Handle the case of a PLAN that is expecting an explicit batch size (common
-  // case for PLAN files generated from ONNX files). If we are using an explicit
-  // batch size, we need to set the input binding dimensions accordingly.
-  // if (input_dims.d[0] == -1) {
-  //   explicit_batch_size_ = true;
-  //   nvinfer1::Dims new_input_dims(input_dims);
-  //   new_input_dims.d[0] = batch_size_;
-  //   const bool resize_success =
-  //     infer_context_->setBindingDimensions(input_binding_index_, new_input_dims);
-  //   if (!resize_success) {
-  //     trt_logger_.log_error("Failed to resize input binding.");
-  //     return cudaErrorInitializationError;
-  //   }
-  // }
+  nvinfer1::Dims in_dims = engine_->getTensorShape(input_name_.c_str());
+  if (in_dims.d[0] == -1) {
+    in_dims.d[0] = static_cast<int>(batch_size_);
+    if (!infer_context_->setInputShape(input_name_.c_str(), in_dims)) {
+      trt_logger_.log_error("Failed to set input shape.");
+      return cudaErrorInitializationError;
+    }
+  }
 
   return cudaSuccess;
 }
 
-size_t inference_impl::get_gr_buffer_size(const size_t vlen, const bool is_complex)
-    const noexcept {
+size_t
+inference_impl::get_gr_buffer_size(const size_t vlen,
+                                   const bool is_complex) const noexcept {
   const size_t float_vector_size = vlen * sizeof(float);
   // A complex vector is made up of two floats, where one float is the real
   // component and the other float is the imaginary component.
   return is_complex ? (2 * float_vector_size) : float_vector_size;
 }
 
-size_t inference_impl::get_trt_binding_size(const nvinfer1::Dims& dims)
-    const noexcept {
-  size_t count = batch_size_;  // total # of elements in the N-dim tensor
+size_t inference_impl::get_trt_binding_size(
+    const nvinfer1::Dims &dims) const noexcept {
+  size_t count = batch_size_; // total # of elements in the N-dim tensor
   // Skip over the first index (batch size) since it's already accounted for.
-  for (int i = 1; i < dims.nbDims; ++i) count *= dims.d[i];
-  return count * sizeof(float);  // convert to bytes
+  for (int i = 1; i < dims.nbDims; ++i)
+    count *= dims.d[i];
+  return count * sizeof(float); // convert to bytes
 }
 
 void inference_impl::print_performance_metrics() const noexcept {
@@ -231,39 +207,61 @@ void inference_impl::print_performance_metrics() const noexcept {
     const double time_per_segment_us =
         total_work_time_us.count() / sig_segments_processed;
     std::cout << "Processed " << total_signal_segments_processed_
-        << " Signal Segments in " << total_work_time_.count() << "s"
-        << std::endl;
+              << " Signal Segments in " << total_work_time_.count() << "s"
+              << std::endl;
     std::cout << "Throughput: " << throughput << " Segments/s" << std::endl;
     std::cout << "Average Time per Segment: " << time_per_segment_us << "us"
-        << std::endl;
+              << std::endl;
   } else {
     std::cout << "0 Signal Segments Processed." << std::endl;
   }
 }
 
 int inference_impl::work(int noutput_items,
-                         gr_vector_const_void_star& input_items,
-                         gr_vector_void_star& output_items) {
+                         gr_vector_const_void_star &input_items,
+                         gr_vector_void_star &output_items) {
   static std::chrono::time_point<std::chrono::steady_clock> start, end;
   // Even if we have a complex vector, it is safe to cast to a float pointer,
   // since a complex number in GNU Radio is just two floats in adjacent
   // memory. Earlier in the constructor, we already accounted for the fact
   // that (given an equal number of samples) a complex buffer will be twice
   // the size of a float buffer.
-  const float* const in = reinterpret_cast<const float* const>(input_items[0]);
-  float* const out = reinterpret_cast<float* const>(output_items[0]);
+  const float *const in = reinterpret_cast<const float *const>(input_items[0]);
+  float *const out = reinterpret_cast<float *const>(output_items[0]);
 
   start = std::chrono::steady_clock::now();
   err_handler_.throw_on_cuda_drv_err(cuCtxPushCurrent(context_),
                                      "push context");
   std::memcpy(buffers_[input_binding_index_], in, input_buffer_size_);
 
-  bool infer_success = false;
-  void** buffs = reinterpret_cast<void**>(buffers_);
-  if (explicit_batch_size_)
-    infer_success = infer_context_->executeV2(buffs);
-  if (!infer_success)
+  void *d_in = nullptr;
+  void *d_out = nullptr;
+  err_handler_.throw_on_cuda_rt_err(
+      cudaHostGetDevicePointer(&d_in, buffers_[input_binding_index_], 0),
+      "get device pointer for input");
+  err_handler_.throw_on_cuda_rt_err(
+      cudaHostGetDevicePointer(&d_out, buffers_[output_binding_index_], 0),
+      "get device pointer for output");
+
+  if (!infer_context_->setTensorAddress(input_name_.c_str(), d_in) ||
+      !infer_context_->setTensorAddress(output_name_.c_str(), d_out)) {
+    err_handler_.throw_on_cuda_rt_err(cudaErrorInvalidValue,
+                                      "set tensor addresses");
+  }
+
+  const bool infer_success = infer_context_->enqueueV3(stream_);
+  if (infer_success)
+    cudaStreamSynchronize(stream_);
+  else
     err_handler_.throw_on_cuda_rt_err(cudaErrorLaunchFailure, "run inference");
+
+  // bool infer_success = false;
+  // void **buffs = reinterpret_cast<void **>(buffers_);
+  // if (explicit_batch_size_)
+  //   infer_success = infer_context_->executeV2(buffs);
+  // if (!infer_success)
+  //   err_handler_.throw_on_cuda_rt_err(cudaErrorLaunchFailure, "run
+  //   inference");
 
   std::memcpy(out, buffers_[output_binding_index_], output_buffer_size_);
   err_handler_.throw_on_cuda_drv_err(cuCtxPopCurrent(&context_),
@@ -273,9 +271,8 @@ int inference_impl::work(int noutput_items,
   std::chrono::duration<double> time_elapsed = end - start;
   total_work_time_ += time_elapsed;
   total_signal_segments_processed_ += batch_size_;
-  return 1;  // only process one vector at a time
+  return 1; // only process one vector at a time
 }
 
-}  // namespace wavelearner
-}  // namespace gr
-
+} // namespace wavelearner
+} // namespace gr
